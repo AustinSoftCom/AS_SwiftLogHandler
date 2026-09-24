@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AustinSoftCom/AS_SwiftLogHandler/actions/workflows/ci.yml/badge.svg)](https://github.com/AustinSoftCom/AS_SwiftLogHandler/actions/workflows/ci.yml)
 
-A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends for Apple platforms that can *write* log messages to OSLog, a plain-text file, or a SQLite database — and *read them back* as structured entries.
+A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends for Apple platforms: *write* log messages to OSLog, or to a plain-text file or SQLite database — with the file and database destinations able to *read entries back* as structured data.
 
 ## Features
 
@@ -162,6 +162,10 @@ Destination.SQLFile.ensureDeleted(url: url)// delete the log and all rotated cop
 - **Levels on disk** are stored as emoji (🧵 trace, 🐞 debug, ℹ️ info, 📝 notice, ⚠️ warning, ❌ error, 🛑 critical), which keeps them compact and easy to spot when eyeballing a raw log file.
 - **Private metadata:** any top-level metadata key named `"private"` is stripped before an entry is written to any destination.
 - **Value semantics:** the handlers are structs, so copies made by `Logger` behave correctly — changing `logLevel` or metadata on one logger never affects another, while all copies share the same underlying file writer.
+
+## Known Issues
+
+- Errors during write due to disk full or loss of write access are not yet handled — the failed write is silently dropped (the application is unaffected, but log entries may be lost). In practice these shouldn't happen, but logging is precisely where the unexpected should be accounted for; robust handling is planned for a future release.
 
 ## Contributing
 
