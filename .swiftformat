@@ -1,0 +1,88 @@
+--acronyms UUID,URL,ID,PKCS,ASN1,IAP,SQL,DB
+--allman false
+#--andOperator
+#--anyObjectProtocol
+#--applicationMain
+#--assertionFailures
+--assetliterals visual-width
+--beforemarks 
+--binarygrouping 4,8
+#--blankLineAfterImports
+#--blankLineAfterSwitchCase
+#--blankLinesAroundMark
+#--blankLinesAtEndOfScope
+#--blankLinesAtStartOfScope
+#--blankLinesBetweenChainedFunctions
+#--blankLinesBetweenImports
+#--blankLinesBetweenScopes
+--categorymark "MARK: %c"
+--classthreshold 0
+--closingparen balanced
+--commas always
+--conflictmarkers reject
+--dateformat "d-MMM-yyyy"
+--decimalgrouping 3,6
+--elseposition same-line
+--enable blankLineAfterSwitchCase
+--enable isEmpty,wrapEnumCases,wrapSwitchCases
+--enumthreshold 0
+--exponentcase lowercase
+--exponentgrouping disabled
+--extensionacl on-declarations
+--extensionlength 0
+--extensionmark "MARK: - %t + %c"
+--fractiongrouping disabled
+--fragment false
+--funcattributes preserve
+--groupedextension "MARK: %c"
+--guardelse auto
+--header "//  Copyright © {created.year} Glenn L. Austin (AustinSoft.com)\n//  Licensed under the MIT License. See LICENSE.txt for details."
+--hexgrouping 4,8
+--hexliteralcase uppercase
+--ifdef outdent
+--importgrouping alphabetized
+--indent tab
+--indentcase false
+--indent-strings true
+--languagemode 6
+--lifecycle 
+#--lineBreakAroundMultilineExpressionChainComponents true
+#--lineBreakBeforeEachArgument true
+#--lineBreakBeforeEachGenericRequirement true
+#--lineBreakBetweenDeclarationAttributes true
+--linebreaks lf
+--markextensions always
+--marktypes always
+--maxwidth none
+--modifierorder 
+--nevertrailing 
+--nospaceoperators 
+--nowrapoperators 
+--octalgrouping 4,8
+--operatorfunc spaced
+--organizetypes class,enum,struct
+--patternlet hoist
+--ranges no-space
+--redundanttype inferred
+--self remove
+--selfrequired 
+--semicolons inline
+--shortoptionals always
+--smarttabs enabled
+--stripunusedargs always
+--structthreshold 0
+--swiftversion 6.0
+--tabwidth 4
+--trailingclosures 
+--trimwhitespace always
+--typeattributes preserve
+--typemark "MARK: - %t"
+--varattributes preserve
+--voidtype void
+--wraparguments before-first
+--wrapcollections before-first
+--wrapconditions after-first
+--wrapparameters before-first
+--wrapreturntype preserve
+--xcodeindentation disabled
+--yodaswap always

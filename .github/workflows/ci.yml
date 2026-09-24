@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Linux support would require gating Destination.SQLFile's `import SQLite3`
+  # (no such module on Linux). Until then, this package is Apple-platforms only.
+  #
+  # linux:
+  #   name: Linux (Swift ${{ matrix.swift }})
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       swift: ["6.3"]
+  #   container: swift:${{ matrix.swift }}
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - name: Build
+  #       run: swift build --build-tests
+  #     - name: Test
+  #       run: swift test
+
+  macos:
+    name: macOS (swift test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Swift version
+        run: swift --version
+      - name: Test
+        run: swift test
+
+  # Windows support is unverified. To try it, uncomment this job — it will
+  # surface any platform-specific compilation issues.
+  #
+  # windows:
+  #   name: Windows (swift test)
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: swift-actions/setup-swift@v2
+  #       with:
+  #         swift-version: "6.4"
+  #     - name: Test
+  #       run: swift test
