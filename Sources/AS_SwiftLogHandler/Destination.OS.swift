@@ -50,6 +50,7 @@ extension Destination {
 
 		public var logLevel: Logging.Logger.Level
 		public var metadata: Logging.Logger.Metadata = .init()
+		public var metadataProvider: Logging.Logger.MetadataProvider?
 		/// The label (source) for this logHandler
 		let label: String
 		/// The actual OS logger
@@ -76,27 +77,36 @@ extension Destination {
 		 - Parameter label: the OSLog category, and the label to use on this LogHandler
 		 - Parameter logLevel: the log levels to send to OSLog
 		 - Parameter levelMap: the mapping of `swift-log` levels to `OSLogType` values
+		 - Parameter metadataProvider: the optional Metadata provider to use with this logger
 		 */
 		public init(
 			subsystem: String = Bundle.main.bundleIdentifier ?? "SwiftLogHandler",
 			label: String,
 			logLevel: Logging.Logger.Level = .trace,
-			levelMap: LevelMap = .defaultMap
+			levelMap: LevelMap = .defaultMap,
+			metadataProvider: Logging.Logger.MetadataProvider? = nil
 		) {
 			self.logLevel = logLevel
 			self.label = label
 			osLog = OSLog(subsystem: subsystem, category: label)
 			osLogMap = levelMap
+			self.metadataProvider = metadataProvider
 		}
 
 		public func log(event: Logging.LogEvent) {
 			let file = Helpers.shortFile(event.file)
+			let metadata = Helpers.prepareMetadata(
+				base: metadata,
+				provider: metadataProvider,
+				explicit: event.metadata,
+				error: event.error
+			)
 			// message is already sanitized as I've already handled %{public}@ and %{private}@, along with the "new" String Interpolation formatting
 			os_log(
 				"%{public}@",
 				log: osLog,
 				type: osLogMap.osLogType(event.level),
-				"[\(event.level.string)] \(file):\(event.line) (\(event.function)): \(Helpers.package(message: event.message.description, metadata: event.metadata, includePrivate: false))"
+				"[\(event.level.string)] \(file):\(event.line) (\(event.function)): \(Helpers.package(message: event.message.description, metadata: metadata, includePrivate: false))"
 			)
 		}
 	}

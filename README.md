@@ -25,7 +25,9 @@ A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends f
   let errors = try await handler.read(matching: { $0.level == .error })
   ```
 
+- **Shared files** — any number of `Destination.File` (or `Destination.SQLFile`) handlers pointing at the same URL share a single, reference-counted writer, so many loggers can safely write to one file. The file is closed when the last handler using it calls `close()`.
 - **Structured metadata** — `Logger.Metadata` is preserved as a `Codable`, `Sendable` `JSONValue` tree and round-trips through both file formats. Metadata under the key `"private"` is never written to disk.
+- **Metadata providers** — all three destinations accept a swift-log `Logger.MetadataProvider`, merged with the handler's and the log statement's metadata on every entry.
 - **Swift 6 native** — strict-concurrency clean; file I/O is serialized through actors backed by a `DispatchSerialQueue`, so the synchronous `log(event:)` path never races with reads, flushes, or rotation.
 
 ## Requirements
@@ -41,7 +43,7 @@ Add the package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/AustinSoftCom/AS_SwiftLogHandler.git", from: "1.0.0"),
+    .package(url: "https://github.com/AustinSoftCom/AS_SwiftLogHandler.git", from: "2.0.0"),
 ],
 ```
 
@@ -124,6 +126,44 @@ LoggingSystem.bootstrap { label in
 }
 ```
 
+### Several loggers sharing one file
+
+Because `LoggingSystem.bootstrap` calls its factory once per `Logger`, it's common to create many handlers for the same URL. They all share one underlying writer, and each handler's `label` is recorded as the entry's module name, so entries stay attributable:
+
+```swift
+let url = URL.documentsDirectory.appending(path: "MyApp.log")
+
+LoggingSystem.bootstrap { label in
+    Destination.File(label: label, url: url)
+}
+
+let network = Logger(label: "Network")    // both write to MyApp.log,
+let database = Logger(label: "Database")  // through the same writer
+```
+
+Each handler holds one reference to the shared writer; `close()` releases that reference, and the file is actually closed once the last reference is released. A given URL must be used by only one destination type — opening the same URL as both a `File` and an `SQLFile` is a programmer error and traps.
+
+### Metadata providers
+
+Pass a swift-log `Logger.MetadataProvider` to have contextual metadata (request IDs, user IDs, trace IDs, …) attached to every entry automatically:
+
+```swift
+enum RequestContext {
+    @TaskLocal static var requestID: String?
+}
+
+let provider = Logger.MetadataProvider {
+    guard let requestID = RequestContext.requestID else { return [:] }
+    return ["request-id": .string(requestID)]
+}
+
+LoggingSystem.bootstrap({ label, metadataProvider in
+    Destination.SQLFile(label: label, url: url, metadataProvider: metadataProvider)
+}, metadataProvider: provider)
+```
+
+Every destination (`OS`, `File`, and `SQLFile`) accepts a `metadataProvider:` in its initializer, and exposes it as the `metadataProvider` property.
+
 ### Reading logs back
 
 Both file destinations conform to `Reader`:
@@ -149,7 +189,9 @@ let recentErrors = try await handler.read(matching: {
 ```swift
 handler.flush()                            // synchronous barrier — all pending writes done
 await handler.flush()                      // async version
-handler.close()                            // close the file; this handler won't reopen it
+let isOpen = handler.open()                // take another reference, reopening the file if needed
+handler.close()                            // release one reference; the last one closes the file
+handler.openCount                          // number of open references to the shared writer
 
 Destination.SQLFile.size(url: url)         // current size on disk (incl. -wal/-shm)
 Destination.SQLFile.fileURLs(from: url)    // all files that make up the log
@@ -160,12 +202,18 @@ Destination.SQLFile.ensureDeleted(url: url)// delete the log and all rotated cop
 
 - **Rotation:** with `.rotateAt`, the current file is renamed to `<name>.1`, existing `<name>.n` files shift to `<name>.n+1`, and anything beyond `maxIndex` is deleted. `read()` returns entries from `<name>.1` followed by the current file.
 - **Levels on disk** are stored as emoji (🧵 trace, 🐞 debug, ℹ️ info, 📝 notice, ⚠️ warning, ❌ error, 🛑 critical), which keeps them compact and easy to spot when eyeballing a raw log file.
+- **Module name:** the `label` passed to a destination's initializer is always recorded as the entry's module name.
+- **Metadata merging:** each entry's metadata is the handler's metadata, overridden by the metadata provider's values, overridden by the log statement's explicit metadata. If the log call includes an `error`, `error.message` and `error.type` keys are added.
 - **Private metadata:** any top-level metadata key named `"private"` is stripped before an entry is written to any destination.
-- **Value semantics:** the handlers are structs, so copies made by `Logger` behave correctly — changing `logLevel` or metadata on one logger never affects another, while all copies share the same underlying file writer.
+- **Value semantics:** the handlers are structs, so copies made by `Logger` behave correctly — changing `logLevel`, metadata, or `metadataProvider` on one logger never affects another. All handlers for a URL share the same underlying writer; a copy that is modified takes its own reference to that writer, so it should be balanced by its own `close()`.
 
 ## Known Issues
 
-- Errors during write due to disk full or loss of write access are not yet handled — the failed write is silently dropped (the application is unaffected, but log entries may be lost). In practice these shouldn't happen, but logging is precisely where the unexpected should be accounted for; robust handling is planned for a future release.
+- `Destination.SQLFile` does not yet handle write errors due to a full disk or loss of write access — the failed write is silently dropped (the application is unaffected, but log entries may be lost). `Destination.File` buffers up to ~1 MB of unwritten entries and retries them on the next write, dropping the oldest entries beyond that limit.
+
+## Release Notes
+
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for what's changed in each version, including the breaking changes in 2.0.
 
 ## Contributing
 

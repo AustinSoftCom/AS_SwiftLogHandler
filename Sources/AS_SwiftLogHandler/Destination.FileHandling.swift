@@ -36,6 +36,8 @@ extension Destination {
 	/// Common file-management operations for file-backed log destinations,
 	/// such as deleting, sizing, closing, and flushing their underlying files.
 	public protocol FileHandling {
+		/// Returns the number of LogHandlers refer to this open object
+		var openCount: Int { get }
 		/// Deletes everything related to this URL, plus any "old" files (.1, .2, .etc)
 		static func ensureDeleted(url: URL)
 		/// Returns the fileURLs related to this URL, mainly for SQLite files (-wal, -shm)
@@ -44,7 +46,9 @@ extension Destination {
 		/// including any companion files (e.g. SQLite's -wal and -shm).
 		static func size(url: URL) -> UInt64
 
-		/// Closes the log file, nothing else will be written to this log file, and *it can't be reopened by this logger*
+		/// Opens the log file if it's not already open
+		func open() -> Bool
+		/// Closes the log file, nothing else will be written to this log file
 		func close()
 		/// Flush the in-progress logging output (synchronous version)
 		func flush()

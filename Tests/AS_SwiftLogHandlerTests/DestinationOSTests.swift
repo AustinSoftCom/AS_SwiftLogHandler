@@ -8,7 +8,6 @@ import Foundation
 import os.log
 import Testing
 
-@Suite
 struct DestinationOSTests {
 	@Test
 	func defaultLevelMapCoversAllLevels() {
