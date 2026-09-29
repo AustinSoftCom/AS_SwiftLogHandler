@@ -15,22 +15,57 @@ extension Destination {
 	 ``Destination/LogRotation/default`` is used unless otherwise specified.
 	 */
 	public struct File: LogHandler, Sendable {
-		public var logLevel: Logging.Logger.Level
+		/// Class object that is used to detect two File pointing to the
+		/// same objRef — and same fileWriter (see: Swift Copy-on-Write)
+		private var objRef = Helpers.ObjectRef()
+		var _logLevel: Logging.Logger.Level
+		public var logLevel: Logging.Logger.Level {
+			get {
+				_logLevel
+			}
+			set {
+				ensureUnique()
+				_logLevel = newValue
+			}
+		}
+
 		public var metadata: Logging.Logger.Metadata = .init()
+		var _metadataProvider: Logger.MetadataProvider?
+		public var metadataProvider: Logger.MetadataProvider? {
+			get {
+				_metadataProvider
+			}
+			set {
+				ensureUnique()
+				_metadataProvider = newValue
+			}
+		}
+
 		/// The label (source) for this logHandler
 		let label: String
 		/// The url to the file
 		let url: URL
 		/// The file writer actor
-		let fileWriter: FileWriter?
+		var fileWriter: FileWriter?
 		/// The bridging queue between our synchronous functionality and actor functionality
 		let queue: DispatchSerialQueue
+		public var openCount: Int {
+			guard let fileWriter else {
+				return 0
+			}
+			return fileWriter.executorQueue.sync {
+				fileWriter.assumeIsolated {
+					$0.openCount
+				}
+			}
+		}
 
 		public subscript(metadataKey key: String) -> Logging.Logger.Metadata.Value? {
 			get {
 				metadata[key]
 			}
 			set {
+				ensureUnique()
 				metadata[key] = newValue
 			}
 		}
@@ -39,37 +74,65 @@ extension Destination {
 		 Create a `File` destination
 
 		 This will create a log file at the specified URL, rotating it per the
-		 `fileHandling` setting, and log the specified log levels.
+		 `fileHandling` setting, and log the specified log levels. All `File` handlers
+		 for the same URL share a single, reference-counted writer.
 
-		 - Parameter label: The label to use on this LogHandler, if empty the LogEvent's source will be used
+		 - Parameter label: The label to use on this LogHandler, recorded as each entry's module name
 		 - Parameter url: file URL where to write the log file
 		 - Parameter fileHandling: how to manage large logs
 		 - Parameter logLevel: the minimum log level to write to the log file
 		 - Parameter queue: the specific DispatchSerialQueue to use for serializing output
+		 - Parameter metadataProvider: the optional Metadata provider to use with this logger
 		 */
 		public init(
 			label: String,
 			url: URL,
 			fileHandling: Destination.LogRotation = .default,
 			logLevel: Logger.Level = .trace,
-			queue: DispatchSerialQueue? = nil
+			queue: DispatchSerialQueue? = nil,
+			metadataProvider: Logger.MetadataProvider? = nil
 		) {
 			self.label = label
 			self.url = url
-			self.logLevel = logLevel
+			_logLevel = logLevel
 			let serialQueue = queue ?? DispatchSerialQueue(label: "fileQueue(\(url.deletingPathExtension().lastPathComponent))", qos: .userInteractive)
 			self.queue = serialQueue
-			fileWriter = FileWriter(url: url, fileHandling: fileHandling, queue: serialQueue)
+			_metadataProvider = metadataProvider
+			fileWriter = Helpers.getWriter(url: url, fileHandling: fileHandling, queue: serialQueue)
 			if fileWriter == nil {
 				try? FileHandle.standardError.write(contentsOf: Data("AS_SwiftLogHandler: File couldn't initialize (read-only/full filesystem?), logging disabled\n".utf8))
+			}
+		}
+
+		/**
+		 Function to create a unique copy of objRef and fileWriter IF AND ONLY IF you've made a copy
+		 of the struct and start modifying it. Otherwise, Swift will save memory and have both variables
+		 point to the same structure.
+
+		 Updating the fileWriter here (rather than just refreshing objRef) is what keeps the
+		 registry's open-count correct: once a copy diverges, it's an independent logger with its
+		 own lifecycle, so it needs its own open() to match its own eventual close().
+		 */
+		private mutating func ensureUnique() {
+			if !isKnownUniquelyReferenced(&objRef) {
+				objRef = .init()
+				if let fileWriter {
+					self.fileWriter = Helpers.getWriter(url: fileWriter.url, fileHandling: fileWriter.fileHandling, queue: fileWriter.executorQueue)
+				}
 			}
 		}
 
 		public func log(event: LogEvent) {
 			let dateTime = Helpers.formattedDateTime(Date())
 			let file = Helpers.shortFile(event.file)
-			let logMessage = Helpers.package(message: event.message.description, metadata: event.metadata, includePrivate: false)
-			let logLine = "\(dateTime) [\(!label.isEmpty ? label : event.source)] [\(event.level.string)] \(file):\(event.line) (\(event.function)): \(logMessage)\n"
+			let metadata = Helpers.prepareMetadata(
+				base: metadata,
+				provider: metadataProvider,
+				explicit: event.metadata,
+				error: event.error
+			)
+			let logMessage = Helpers.package(message: event.message.description, metadata: metadata, includePrivate: false)
+			let logLine = "\(dateTime) [\(label)] [\(event.level.string)] \(file):\(event.line) (\(event.function)): \(logMessage)\n"
 			queue.sync {
 				fileWriter?.assumeIsolated { writer in
 					writer.write(logLine)
@@ -105,10 +168,28 @@ extension Destination.File: Destination.FileHandling {
 		(try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? 0
 	}
 
+	/// Open the log file
+	public func open() -> Bool {
+		guard let fileWriter else {
+			return false
+		}
+		return queue.sync {
+			fileWriter.assumeIsolated { writer in
+				writer.open()
+			}
+		}
+	}
+
 	/// Close the log file
 	public func close() {
-		queue.sync {
-			fileWriter?.assumeIsolated { writer in
+		guard let fileWriter else {
+			return
+		}
+		defer {
+			Helpers.checkWriter(fileWriter)
+		}
+		return queue.sync {
+			fileWriter.assumeIsolated { writer in
 				writer.close()
 			}
 		}
@@ -214,103 +295,5 @@ extension Destination.File: Reader {
 		}
 
 		return entries
-	}
-}
-
-extension Destination.File {
-	/// An actor that serializes file I/O using the destination's queue as its executor.
-	actor FileWriter {
-		private let url: URL
-		private var fileHandle: FileHandle?
-		private let fileHandling: Destination.LogRotation
-		private let executorQueue: DispatchSerialQueue
-
-		nonisolated var unownedExecutor: UnownedSerialExecutor {
-			executorQueue.asUnownedSerialExecutor()
-		}
-
-		init?(
-			url: URL,
-			fileHandling: Destination.LogRotation = .unbounded,
-			queue: DispatchSerialQueue
-		) {
-			self.url = url
-			executorQueue = queue
-			self.fileHandling = fileHandling
-			fileHandle = Self.openFile(at: url)
-			if fileHandle == nil {
-				return nil
-			}
-
-#if SUPPORTS_LOGROTATE
-			if case .useLogRotate = fileHandling {
-				let signalSource = DispatchSource.makeSignalSource(signal: SIGHUP, queue: executorQueue)
-				signalSource.setEventHandler { [weak self] in
-					Task {
-						await self?.reopen()
-					}
-				}
-				signalSource.resume()
-			}
-#endif
-		}
-
-		deinit {
-			try? fileHandle?.close()
-		}
-
-		static func openFile(at url: URL) -> FileHandle? {
-			if !FileManager.default.fileExists(atPath: url.path) {
-				FileManager.default.createFile(atPath: url.path, contents: nil, attributes: nil)
-			}
-			let fileHandle = try? FileHandle(forUpdating: url)
-			_ = fileHandle?.seekToEndOfFile()
-			return fileHandle
-		}
-
-#if SUPPORTS_LOGROTATE
-		func reopen() {
-			try? fileHandle?.close()
-			fileHandle = Self.openFile(at: url)
-		}
-#endif
-
-		func write(_ string: String) {
-			guard !string.isEmpty,
-			      let data = string.data(using: .utf8)
-			else {
-				return
-			}
-
-			// Write whatever we have, then check the resulting size.
-			fileHandle?.write(data)
-
-			switch fileHandling {
-#if SUPPORTS_LOGROTATE
-			case .useLogRotate:
-				fallthrough
-#endif
-
-			case .unbounded:
-				return
-
-			case let .rotateAt(sizeMax, maxIndex):
-				guard let curOffset = try? fileHandle?.offset() else {
-					// Couldn't check the resulting size, so just return
-					return
-				}
-
-				if curOffset >= sizeMax {
-					close()
-					Helpers.rotate(baseURL: url, maxIndex: maxIndex)
-					fileHandle = Self.openFile(at: url)
-				}
-			}
-		}
-
-		func close() {
-			try? fileHandle?.close()
-			fileHandle = nil
-		}
 	}
 }

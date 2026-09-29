@@ -72,7 +72,11 @@ struct LoggingTests {
 		#expect(logger2[metadataKey: "only-on"] == "second")
 
 		logger2.close()
+		#expect(Helpers.checkWriter(logger2) == .fileHandlerStillBusy)
+		#expect(Helpers.checkWriter(logger1) == .fileHandlerStillBusy)
 		logger1.close()
+		#expect(Helpers.checkWriter(logger2) == .fileHandlerNotTracked)
+		#expect(Helpers.checkWriter(logger1) == .fileHandlerNotTracked)
 
 		type(of: logger1).ensureDeleted(url: url)
 		type(of: logger2).ensureDeleted(url: url)

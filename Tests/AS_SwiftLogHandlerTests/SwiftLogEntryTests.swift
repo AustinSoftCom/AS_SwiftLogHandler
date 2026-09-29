@@ -6,12 +6,13 @@ import Foundation
 @testable import Logging
 import Testing
 
-@Suite
 struct JSONValueTests {
 	/// A stringConvertible payload that is none of the specially-handled numeric types,
 	/// so conversion must fall back to `.string(description)`.
 	struct Coordinate: CustomStringConvertible, Sendable {
-		var description: String { "12.5,-3.25" }
+		var description: String {
+			"12.5,-3.25"
+		}
 	}
 
 	@Test
@@ -91,7 +92,6 @@ struct JSONValueTests {
 	}
 }
 
-@Suite
 struct SwiftLogEntryTests {
 	static let date = Date(timeIntervalSince1970: 1_000_000)
 
