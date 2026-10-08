@@ -336,6 +336,30 @@ struct LoggingTests {
 		#expect(!fileManager.fileExists(atPath: url.appendingPathExtension("3").path))
 	}
 
+	@Test(
+		arguments: [
+			{ Destination.File(label: $0, url: $1, fileHandling: $2, logLevel: $3, queue: $4) },
+			{ Destination.SQLFile(label: $0, url: $1, fileHandling: $2, logLevel: $3, queue: $4) },
+		] as [FileHandlingReaderFactory]
+	)
+	func loggingToPathWithSpaces(
+		handler: FileHandlingReaderFactory
+	) async throws {
+		let url = FileManager.default.temporaryDirectory.appending(path: "\(UUID().uuidString) with spaces").appendingPathExtension("log")
+		let logHandler = handler("Spaces", url, .unbounded, .trace, nil)
+		let logger = Logger(label: "Spaces") { _ in logHandler }
+		defer {
+			logHandler.close()
+			type(of: logHandler).ensureDeleted(url: url)
+		}
+
+		logger.info("Spaces")
+
+		#expect(FileManager.default.fileExists(atPath: url.path))
+		let records = try await logHandler.read().map(\.message)
+		#expect(records == ["Spaces"])
+	}
+
 	@Test
 	func largeFileMessages() async throws {
 		let uuidString = UUID().uuidString

@@ -452,7 +452,7 @@ extension SQLiteFile {
 
 		init?(url: URL?, useWAL: Bool = true) {
 			let path: String = if let url {
-				url.path()
+				url.path(percentEncoded: false)
 			} else {
 				":memory:"
 			}
