@@ -29,18 +29,6 @@ actor FileWriter {
 			return nil
 		}
 		openCount = 1
-
-#if SUPPORTS_LOGROTATE
-		if case .useLogRotate = fileHandling {
-			let signalSource = DispatchSource.makeSignalSource(signal: SIGHUP, queue: executorQueue)
-			signalSource.setEventHandler { [weak self] in
-				Task {
-					await self?.reopen()
-				}
-			}
-			signalSource.resume()
-		}
-#endif
 	}
 
 	deinit {
@@ -48,16 +36,25 @@ actor FileWriter {
 	}
 
 	private static func openFile(at url: URL) -> FileHandle? {
-		if !FileManager.default.fileExists(atPath: url.path) {
-			FileManager.default.createFile(atPath: url.path, contents: nil, attributes: nil)
+		// O_APPEND keeps every write at the end of the file, even after an external
+		// tool (such as logrotate's copytruncate) truncates it.
+		let fileDescriptor = openForAppending(url.path)
+		guard fileDescriptor >= 0 else {
+			return nil
 		}
-		let fileHandle = try? FileHandle(forUpdating: url)
-		_ = fileHandle?.seekToEndOfFile()
-		return fileHandle
+		return FileHandle(fileDescriptor: fileDescriptor, closeOnDealloc: true)
 	}
 
 #if SUPPORTS_LOGROTATE
-	func reopen() {
+	/// Reopens the file if something else (such as logrotate) has renamed or removed it.
+	private func reopenIfReplaced() {
+		guard openCount > 0 else {
+			return
+		}
+		let openIdentity = fileHandle.flatMap { FileIdentity(fileDescriptor: $0.fileDescriptor) }
+		guard openIdentity == nil || openIdentity != FileIdentity(path: url.path) else {
+			return
+		}
 		try? fileHandle?.close()
 		fileHandle = Self.openFile(at: url)
 	}
@@ -72,6 +69,12 @@ actor FileWriter {
 		else {
 			return
 		}
+
+#if SUPPORTS_LOGROTATE
+		if case .useLogRotate = fileHandling {
+			reopenIfReplaced()
+		}
+#endif
 
 		pendingData.0.append(data)
 		pendingData.1 += UInt64(data.count)
@@ -159,4 +162,10 @@ actor FileWriter {
 		fileHandle = nil
 		openCount = 0
 	}
+}
+
+/// Opens (creating if needed) a file for appending, returning its file descriptor or -1.
+/// This is outside `FileWriter` so that `open` isn't shadowed by `FileWriter.open()`.
+private func openForAppending(_ path: String) -> Int32 {
+	open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
 }

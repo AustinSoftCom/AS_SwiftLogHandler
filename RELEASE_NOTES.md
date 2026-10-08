@@ -1,5 +1,21 @@
 # Release Notes
 
+## 2.1.0
+
+### Behavior changes
+
+- **`.useLogRotate` no longer handles `SIGHUP`.** Before each write, the file and SQLite destinations now check whether their file has been renamed or removed, and reopen it at the original path. Remove any `postrotate` script that sends `SIGHUP` (such as `kill -HUP`): the library no longer handles the signal, so unless your app handles or ignores it, `SIGHUP` terminates the process.
+- **SQLite databases using `.useLogRotate` no longer use WAL mode.** A WAL file doesn't follow a renamed database, so entries still in it were lost when logrotate renamed the database. These databases now use SQLite's rollback journal, which is slower per write. Other rotation modes still use WAL.
+
+### New features
+
+- **Linux support.** `Destination.File` and `Destination.SQLFile` work on Linux; `Destination.OS` is Apple-only. Building needs the SQLite development headers (`libsqlite3-dev` on Debian/Ubuntu, `sqlite-devel` on Fedora/RHEL), and `Destination.SQLFile` needs SQLite 3.45 or later for JSONB support.
+- **logrotate's `copytruncate` works with text log files**, which are now opened for appending. Don't use `copytruncate` with SQLite databases.
+
+### Fixes
+
+- `Destination.SQLFile` percent-encoded its path, so a URL containing spaces or other reserved characters created a database with names like `%20` in it.
+
 ## 2.0.0
 
 ### Breaking changes
