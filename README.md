@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/AustinSoftCom/AS_SwiftLogHandler/actions/workflows/ci.yml/badge.svg)](https://github.com/AustinSoftCom/AS_SwiftLogHandler/actions/workflows/ci.yml)
 
-A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends for Apple platforms: *write* log messages to OSLog, or to a plain-text file or SQLite database — with the file and database destinations able to *read entries back* as structured data.
+A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends for Apple platforms and Linux: *write* log messages to OSLog (Apple platforms only), or to a plain-text file or SQLite database — with the file and database destinations able to *read entries back* as structured data.
 
 ## Features
 
@@ -17,7 +17,7 @@ A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends f
       - watchOS: `.rotateAt(size: 32 * 1024, maxIndex: 3)`
       - iOS/tvOS: `.rotateAt(size: 64 * 1024, maxIndex: 3)`
       - anything else: `.rotateAt(size: 1024 * 1024, maxIndex: 5)`
-  - `.useLogRotate` (non-mobile/embedded platforms only) — leaves rotation to an external tool such as `newsyslog`/`logrotate`; the file destination reopens its file on `SIGHUP`.
+  - `.useLogRotate` (non-mobile/embedded platforms only) — leaves rotation to an external tool such as `newsyslog`/`logrotate`; the file and SQLite destinations notice when their file has been renamed or removed and reopen it, so no `postrotate` signal is needed. The text file destination also works with logrotate's `copytruncate`; don't use `copytruncate` with SQLite databases. With `.useLogRotate`, the SQLite destination uses a rollback journal instead of WAL, since a WAL file doesn't follow a renamed database.
   - `.unbounded` — no rotation; the file grows without limit.
 - **Read logs back** — `Destination.File` and `Destination.SQLFile` conform to `Reader`, returning `[SwiftLogEntry]` (including entries from the most recent rotated file), optionally filtered with a closure:
 
@@ -34,6 +34,7 @@ A set of [swift-log](https://github.com/apple/swift-log) `LogHandler` backends f
 
 - Swift 6.3 toolchain or later
 - macOS 15+, iOS 18+, tvOS 18+, watchOS 11+, or visionOS 2+
+- Linux, with the SQLite development headers installed (`libsqlite3-dev` on Debian/Ubuntu, `sqlite-devel` on Fedora/RHEL). `Destination.SQLFile` needs SQLite 3.45 or later for JSONB support (Ubuntu 24.04+, Debian 13+). `Destination.OS` is unavailable on Linux.
 
 Dependencies: [swift-log](https://github.com/apple/swift-log).
 

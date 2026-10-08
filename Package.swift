@@ -25,15 +25,27 @@ let package = Package(
 			name: "AS_SwiftLogHandler",
 			dependencies: [
 				.product(name: "Logging", package: "swift-log"),
+				.target(name: "CSQLite3", condition: .when(platforms: [.linux])),
 			],
 			swiftSettings: [
 				.define("SUPPORTS_LOGROTATE", .when(platforms: [.macOS, .linux])),
+			]
+		),
+		.systemLibrary(
+			name: "CSQLite3",
+			pkgConfig: "sqlite3",
+			providers: [
+				.apt(["libsqlite3-dev"]),
+				.yum(["sqlite-devel"]),
 			]
 		),
 		.testTarget(
 			name: "AS_SwiftLogHandlerTests",
 			dependencies: [
 				"AS_SwiftLogHandler",
+			],
+			swiftSettings: [
+				.define("SUPPORTS_LOGROTATE", .when(platforms: [.macOS, .linux])),
 			]
 		),
 	]

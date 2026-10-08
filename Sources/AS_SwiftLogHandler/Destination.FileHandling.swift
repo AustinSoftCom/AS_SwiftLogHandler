@@ -9,6 +9,12 @@ extension Destination {
 	public enum LogRotation: Sendable {
 #if SUPPORTS_LOGROTATE
 		/// Use the external tool `logRotate` to manage log file sizes.
+		///
+		/// Before each write, the destination checks whether its file has been renamed
+		/// or removed, and if so reopens it at the original path. Text files are
+		/// opened for appending, so logrotate's `copytruncate` also works with them.
+		/// SQLite databases use a rollback journal instead of WAL, since a WAL file
+		/// doesn't follow a renamed database; don't use `copytruncate` with them.
 		case useLogRotate
 #endif
 		/// Internally rotate log files when they meet or exceed the specified size,

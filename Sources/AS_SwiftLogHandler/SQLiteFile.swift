@@ -3,10 +3,17 @@
 
 import Foundation
 import Logging
+#if canImport(SQLite3)
 import SQLite3
+#else
+import CSQLite3
+#endif
 import Synchronization
 
 private let SQLITE_TRANSIENT: (@convention(c) (UnsafeMutableRawPointer?) -> Void) = unsafeBitCast(uintptr_t.max, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+
+/// Thrown only to abort `SQLiteFile.init` and return nil.
+private struct InitAborted: Error {}
 
 /// An actor that serializes file I/O using the destination's queue as its executor.
 actor SQLiteFile {
@@ -53,7 +60,7 @@ actor SQLiteFile {
 			}
 		}
 
-		sqlite = SQLiteInfo(url: url)
+		sqlite = SQLiteInfo(url: url, useWAL: Self.useWAL(fileHandling))
 
 		if sqlite == nil {
 			// Couldn't open the file, so try to rotate the existing log file and try again.
@@ -67,7 +74,7 @@ actor SQLiteFile {
 			for fileUrl in Destination.SQLFile.fileURLs(from: url) {
 				try? fileManager.removeItem(at: fileUrl)
 			}
-			sqlite = SQLiteInfo(url: url)
+			sqlite = SQLiteInfo(url: url, useWAL: Self.useWAL(fileHandling))
 		} else {
 			openCount = 0
 		}
@@ -78,18 +85,16 @@ actor SQLiteFile {
 			openCount = 0
 		}
 		writesTilNextCheck = 0
+	}
 
+	/// Whether to use WAL mode, which isn't safe when an external tool renames the database.
+	private static func useWAL(_ fileHandling: Destination.LogRotation) -> Bool {
 #if SUPPORTS_LOGROTATE
 		if case .useLogRotate = fileHandling {
-			let signalSource = DispatchSource.makeSignalSource(signal: SIGHUP, queue: executorQueue)
-			signalSource.setEventHandler { [weak self] in
-				Task {
-					await self?.reopen()
-				}
-			}
-			signalSource.resume()
+			return false
 		}
 #endif
+		return true
 	}
 
 	func checkAndRotateFile() -> Int {
@@ -100,7 +105,8 @@ actor SQLiteFile {
 		switch fileHandling {
 #if SUPPORTS_LOGROTATE
 		case .useLogRotate:
-			fallthrough
+			reopenIfReplaced()
+			return 0 // Check again before the next write
 #endif
 
 		case .unbounded:
@@ -126,7 +132,7 @@ actor SQLiteFile {
 				for fileUrl in Destination.SQLFile.fileURLs(from: url) {
 					try? fileManager.removeItem(at: fileUrl)
 				}
-				sqlite = SQLiteInfo(url: url)
+				sqlite = SQLiteInfo(url: url, useWAL: Self.useWAL(fileHandling))
 				return calcNumChecks(maxSize)
 			} else {
 				return calcNumChecks(maxSize - totalSize)
@@ -135,9 +141,15 @@ actor SQLiteFile {
 	}
 
 #if SUPPORTS_LOGROTATE
-	func reopen() {
-		sqlite?.close()
-		sqlite = SQLiteInfo(url: url)
+	/// Reopens the database if something else (such as logrotate) has renamed or removed it.
+	private func reopenIfReplaced() {
+		guard let sqlite,
+		      sqlite.fileIdentity == nil || sqlite.fileIdentity != FileIdentity(path: sqlite.path)
+		else {
+			return
+		}
+		sqlite.close()
+		self.sqlite = SQLiteInfo(url: url, useWAL: Self.useWAL(fileHandling))
 	}
 #endif
 
@@ -147,7 +159,7 @@ actor SQLiteFile {
 			return false
 		}
 		if openCount == 0 {
-			sqlite = SQLiteInfo(url: url)
+			sqlite = SQLiteInfo(url: url, useWAL: Self.useWAL(fileHandling))
 			if sqlite != nil {
 				openCount = 1
 			}
@@ -403,7 +415,7 @@ extension SQLiteFile {
 				let fileManager = FileManager()
 				let url2 = url.appendingPathExtension("1")
 				if fileManager.fileExists(atPath: url2.path),
-				   let sqlite2 = SQLiteInfo(url: url2)
+				   let sqlite2 = SQLiteInfo(url: url2, useWAL: Self.useWAL(fileHandling))
 				{
 					try entries.append(contentsOf: readEntries(from: sqlite2, matching: matching))
 				}
@@ -424,6 +436,12 @@ extension SQLiteFile {
 		var insertStmt: OpaquePointer?
 		var selectStmt: OpaquePointer?
 		var rowCountStmt: OpaquePointer?
+		/// The path the database was opened with
+		let path: String
+#if SUPPORTS_LOGROTATE
+		/// The identity of the database file when it was opened
+		let fileIdentity: FileIdentity?
+#endif
 
 		var dbOpen: Bool {
 			dbPointer != nil
@@ -432,7 +450,7 @@ extension SQLiteFile {
 				&& rowCountStmt != nil
 		}
 
-		init?(url: URL?) {
+		init?(url: URL?, useWAL: Bool = true) {
 			let path: String = if let url {
 				url.path()
 			} else {
@@ -450,7 +468,7 @@ extension SQLiteFile {
 				var stmt: OpaquePointer? = nil
 				sqlite3_prepare_v2(dbPointer, sql, -1, &stmt, nil)
 				guard let stmt else {
-					throw NSError() // Only to abort the init and return nil
+					throw InitAborted()
 				}
 				return stmt
 			}
@@ -473,7 +491,9 @@ extension SQLiteFile {
 			}
 
 			if url != nil {
-				sqlite3_exec(dbPointer, "PRAGMA journal_mode=WAL;", nil, nil, nil)
+				// A WAL file is tied to the database's name, so if something renames the
+				// database (as logrotate does), the entries still in the WAL are lost.
+				sqlite3_exec(dbPointer, useWAL ? "PRAGMA journal_mode=WAL;" : "PRAGMA journal_mode=DELETE;", nil, nil, nil)
 				sqlite3_exec(dbPointer, "PRAGMA synchronous=NORMAL;", nil, nil, nil)
 			}
 			sqlite3_exec(dbPointer, "PRAGMA auto_vacuum = INCREMENTAL;", nil, nil, nil)
@@ -511,9 +531,13 @@ extension SQLiteFile {
 				)
 				rowCountStmt = try stmtCreator(dbPointer, "SELECT COUNT(*) FROM logs;")
 				guard let insertStmt, let selectStmt, let rowCountStmt else {
-					throw NSError()
+					throw InitAborted()
 				}
 				self.dbPointer = dbPointer
+				self.path = path
+#if SUPPORTS_LOGROTATE
+				fileIdentity = FileIdentity(path: path)
+#endif
 				self.insertStmt = insertStmt
 				self.selectStmt = selectStmt
 				self.rowCountStmt = rowCountStmt

@@ -316,3 +316,33 @@ enum Helpers {
 
 	final class ObjectRef: Sendable {}
 }
+
+#if SUPPORTS_LOGROTATE
+/// Identifies a file by device and inode, to notice when an external tool
+/// (such as logrotate) renames or removes a log file and creates a new one.
+struct FileIdentity: Equatable {
+	let device: UInt64
+	let inode: UInt64
+
+	init?(path: String) {
+		var info = stat()
+		guard stat(path, &info) == 0 else {
+			return nil
+		}
+		self.init(info)
+	}
+
+	init?(fileDescriptor: Int32) {
+		var info = stat()
+		guard fstat(fileDescriptor, &info) == 0 else {
+			return nil
+		}
+		self.init(info)
+	}
+
+	private init(_ info: stat) {
+		device = UInt64(truncatingIfNeeded: info.st_dev)
+		inode = UInt64(truncatingIfNeeded: info.st_ino)
+	}
+}
+#endif

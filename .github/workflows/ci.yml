@@ -7,23 +7,24 @@ on:
     branches: [main, develop]
 
 jobs:
-  # Linux support would require gating Destination.SQLFile's `import SQLite3`
-  # (no such module on Linux). Until then, this package is Apple-platforms only.
-  #
-  # linux:
-  #   name: Linux (Swift ${{ matrix.swift }})
-  #   runs-on: ubuntu-latest
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       swift: ["6.3"]
-  #   container: swift:${{ matrix.swift }}
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #     - name: Build
-  #       run: swift build --build-tests
-  #     - name: Test
-  #       run: swift test
+  linux:
+    name: Linux (Swift ${{ matrix.swift }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 6.3 is the minimum declared by swift-tools-version; also test the
+        # latest release. Bump these as new toolchains ship.
+        swift: ["6.3", "6.4"]
+    container: swift:${{ matrix.swift }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install SQLite headers
+        run: apt-get update && apt-get install -y libsqlite3-dev
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test
 
   macos:
     name: macOS (swift test)
